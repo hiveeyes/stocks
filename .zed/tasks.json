@@ -3,7 +3,7 @@
     "label": "stocks serve",
     "command": "/home/rp/.cargo/bin/bacon",
     "args": ["serve", "--", "--", "-l", "9090"],
-    "env": { "RUST_BACKTRACE": "1", "ROCKET_PORT": "9090" }
-    //"cwd": "$ZED_WORKTREE_ROOT/dyrr"
+    "env": { "RUST_BACKTRACE": "1", "ROCKET_PORT": "9090" },
+    "cwd": "$ZED_WORKTREE_ROOT/stocks"
   }
 ]

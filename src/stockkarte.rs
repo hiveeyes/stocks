@@ -15,7 +15,7 @@ pub struct Stockkarte {
 }
 
 #[derive(Debug)]
-enum AddedQueen {
+pub enum AddedQueen {
     Cell,
     Virgin,
     Copulated,
