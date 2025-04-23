@@ -1,153 +1,136 @@
 mod migrations;
 
-use cot::bytes::Bytes;
+use std::fmt::{Display, Formatter};
+
+use askama::Template;
+use async_trait::async_trait;
+use cot::admin::{AdminApp, AdminModel, AdminModelManager, DefaultAdminModelManager};
+use cot::auth::db::{DatabaseUser, DatabaseUserApp};
 use cot::cli::CliMetadata;
+use cot::config::{
+    AuthBackendConfig, DatabaseConfig, MiddlewareConfig, ProjectConfig, SessionMiddlewareConfig,
+};
 use cot::db::migrations::SyncDynMigration;
-use cot::form::{FormContext, FormResult};
-use cot::middleware::{AuthMiddleware, LiveReloadMiddleware, SessionMiddleware};
-use cot::project::{MiddlewareContext, RegisterAppsContext, RootHandlerBuilder};
-use cot::request::Request;
-use cot::response::{Response, ResponseExt};
-use cot::reverse_redirect;
-use cot::router::{Route, Router};
-use cot::static_files::StaticFilesMiddleware;
-use cot::Method;
-use cot::{static_files, App, AppBuilder, Body, BoxedHandler, Project, StatusCode};
-use rinja::Template;
-use std::fmt::Display;
-struct StocksApp;
-
-struct Item {
-    title: String,
-}
-impl Display for Item {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.title)
-    }
-}
-
-#[derive(Template)]
-#[template(path = "index.html")]
-struct IndexTemplate {
-    item: Item,
-}
-
-async fn index() -> cot::Result<Response> {
-    let index_template = IndexTemplate {
-        item: Item {
-            title: String::from("bar"),
-        },
-    };
-    let rendered = index_template.render()?;
-
-    Ok(Response::new_html(StatusCode::OK, Body::fixed(rendered)))
-}
+use cot::db::{Auto, Model, model};
 use cot::form::Form;
+use cot::middleware::{AuthMiddleware, LiveReloadMiddleware, SessionMiddleware};
+use cot::project::{MiddlewareContext, RegisterAppsContext};
+use cot::request::extractors::RequestDb;
+use cot::response::{Response, ResponseExt};
+use cot::router::{Route, Router, Urls};
+use cot::static_files::StaticFilesMiddleware;
+use cot::{App, AppBuilder, Body, BoxedHandler, Project, ProjectContext, StatusCode};
+//mod stockkarte;
+//use stockkarte::Inventorials;
 
-#[derive(Form, Debug)]
-struct ContactForm {
+#[derive(Debug, Clone, Form, AdminModel)]
+#[model]
+struct Beekeeper {
+    #[model(primary_key)]
+    id: Auto<i32>,
     name: String,
-    email: String,
-    #[form(opt(max_length = 1000))]
-    message: String,
 }
-impl Display for ContactForm {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+
+impl Display for Beekeeper {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name)
     }
 }
 
-#[derive(Template, Debug)]
-#[template(path = "form.html")]
-struct ContactTemplate {
-    request: &'static cot::request::Request,
-    form: ContactForm,
+#[derive(Debug, Template)]
+#[template(path = "index.html")]
+struct IndexTemplate<'a> {
+    urls: &'a Urls,
+    beekeepers: Vec<Beekeeper>,
 }
 
-async fn contact(mut request: Request) -> cot::Result<Response> {
-    // Handle POST request (form submission)
-    if request.method() == Method::POST {
-        match ContactForm::from_request(&mut request).await? {
-            FormResult::Ok(form) => {
-                // Form is valid! Process the data
-                println!("Message from {}: {}", form.name, form.message);
+async fn index(urls: Urls, RequestDb(db): RequestDb) -> cot::Result<Response> {
+    let beekeepers = Beekeeper::objects().all(&db).await?;
+    let index_template = IndexTemplate {
+        urls: &urls,
+        beekeepers,
+    };
+    let rendered = index_template.render().unwrap();
 
-                // Redirect after successful submission
-                Ok(reverse_redirect!(request, "thank_you")?)
-            }
-            FormResult::ValidationError(context) => {
-                // Form has errors - render the template with error messages
-                let template = ContactTemplate {
-                    request: &request,
-                    form: context,
-                };
-                Ok(Response::new_html(
-                    StatusCode::OK,
-                    Body::fixed(template.render()?),
-                ))
-            }
-        }
-    } else {
-        // Handle GET request (display empty form)
-        let template = ContactTemplate {
-            request: &request,
-            form: ContactForm::build_context(&mut request).await?,
-        };
-
-        Ok(Response::new_html(
-            StatusCode::OK,
-            Body::fixed(template.render()?),
-        ))
-    }
+    Ok(Response::new_html(StatusCode::OK, Body::fixed(rendered)))
 }
 
-impl App for StocksApp {
+struct HelloApp;
+
+#[async_trait]
+impl App for HelloApp {
     fn name(&self) -> &'static str {
-        env!("CARGO_CRATE_NAME")
+        env!("CARGO_PKG_NAME")
+    }
+
+    async fn init(&self, context: &mut ProjectContext) -> cot::Result<()> {
+        // TODO use transaction
+        let user = DatabaseUser::get_by_username(context.database(), "admin").await?;
+        if user.is_none() {
+            DatabaseUser::create_user(context.database(), "admin", "admin").await?;
+        }
+
+        Ok(())
     }
 
     fn migrations(&self) -> Vec<Box<SyncDynMigration>> {
         cot::db::migrations::wrap_migrations(migrations::MIGRATIONS)
     }
 
-    fn router(&self) -> Router {
-        Router::with_urls([
-            Route::with_handler_and_name("/", index, "list_stocks"),
-            Route::with_handler_and_name("/submit", contact, "submit_contact"),
-        ])
+    fn admin_model_managers(&self) -> Vec<Box<dyn AdminModelManager>> {
+        vec![Box::new(DefaultAdminModelManager::<Beekeeper>::new())]
     }
 
-    fn static_files(&self) -> Vec<(String, Bytes)> {
-        static_files!("css/main.css")
+    fn router(&self) -> Router {
+        Router::with_urls([Route::with_handler("/", index)])
     }
 }
 
-struct StocksProject;
+struct AdminProject;
 
-impl Project for StocksProject {
+impl Project for AdminProject {
     fn cli_metadata(&self) -> CliMetadata {
         cot::cli::metadata!()
     }
 
+    fn config(&self, _config_name: &str) -> cot::Result<ProjectConfig> {
+        Ok(ProjectConfig::builder()
+            .debug(true)
+            .database(
+                DatabaseConfig::builder()
+                    .url("sqlite://db.sqlite3?mode=rwc")
+                    .build(),
+            )
+            .auth_backend(AuthBackendConfig::Database)
+            .middlewares(
+                MiddlewareConfig::builder()
+                    .session(SessionMiddlewareConfig::builder().secure(false).build())
+                    .build(),
+            )
+            .build())
+    }
+
     fn register_apps(&self, apps: &mut AppBuilder, _context: &RegisterAppsContext) {
-        apps.register_with_views(StocksApp, "");
+        apps.register(DatabaseUserApp::new());
+        apps.register_with_views(AdminApp::new(), "/admin");
+        apps.register_with_views(HelloApp, "");
     }
 
     fn middlewares(
         &self,
-        handler: RootHandlerBuilder,
+        handler: cot::project::RootHandlerBuilder,
         context: &MiddlewareContext,
     ) -> BoxedHandler {
         handler
             .middleware(StaticFilesMiddleware::from_context(context))
             .middleware(AuthMiddleware::new())
-            .middleware(SessionMiddleware::new())
-            .middleware(LiveReloadMiddleware::from_context(context))
+            .middleware(SessionMiddleware::from_context(context))
+            .middleware(LiveReloadMiddleware::new())
             .build()
     }
 }
 
 #[cot::main]
 fn main() -> impl Project {
-    StocksProject
+    AdminProject
 }

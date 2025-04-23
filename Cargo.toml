@@ -1,9 +1,12 @@
 [package]
 name = "stocks"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
+askama = "0.13.1"
+async-trait = "0.1.88"
+chrono = "0.4.40"
 cot = { version = "0.2.2", features = ["full"] }
 direction = "0.18.1"
 rinja = "0.3"

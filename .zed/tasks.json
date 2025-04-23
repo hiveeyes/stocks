@@ -5,5 +5,11 @@
     "args": ["serve", "--", "--", "-l", "9090"],
     "env": { "RUST_BACKTRACE": "1", "ROCKET_PORT": "9090" },
     "cwd": "$ZED_WORKTREE_ROOT/stocks"
+  },
+  {
+    "label": "stocks migrate",
+    "command": "/home/rp/.cargo/bin/cot",
+    "args": ["migration", "make"],
+    "cwd": "$ZED_WORKTREE_ROOT/stocks"
   }
 ]
